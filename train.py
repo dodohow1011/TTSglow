@@ -43,7 +43,7 @@ from alignment import get_alignment, get_tacotron2
 import hparams as hp
 from logger import waveglowLogger
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 def load_checkpoint(checkpoint_path, model, optimizer):
     assert os.path.isfile(checkpoint_path)
@@ -141,6 +141,7 @@ def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoin
 
     model = model.train()
     epoch_offset = max(0, int(iteration / len(training_loader)))
+    beta = hp.batch_size
     print ("Total Epochs: {}".format(hp.epochs))
     print ("Batch Size: {}".format(hp.batch_size))
     
@@ -180,9 +181,12 @@ def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoin
 
 
             outputs = model(src_seq, src_pos, mel_tgt, mel_max_len, alignment_target)
-            _, _ , _, duration_predictor, mel_predict = outputs
+            _, _ , _, duration_predictor = outputs
             mel_tgt = mel_tgt.transpose(1, 2)
-            loss = criterion(outputs, alignment_target, mel_tgt)
+            max_like, dur_loss = criterion(outputs, alignment_target, mel_tgt)
+            if beta > 1 and iteration % 10000 == 0:
+                beta = beta // 2
+            loss = max_like + dur_loss
 
             if num_gpus > 1:
                 reduced_loss = reduce_tensor(loss.data, num_gpus).item()
@@ -201,12 +205,11 @@ def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoin
 
             print("{}:\t{:.9f}".format(iteration, reduced_loss))
             if hp.with_tensorboard and rank == 0:
-                logger.add_scalar('training_loss', reduced_loss, i + len(training_loader) * epoch)
-                logger.log_training(reduced_loss, learning_rate, iteration)
+                logger.log_training(reduced_loss, dur_loss, learning_rate, iteration)
 
             if (iteration % hp.save_step == 0):
                 if rank == 0:
-                    logger.log_alignment(model, mel_predict, mel_tgt, iteration)
+                    # logger.log_alignment(model, mel_predict, mel_tgt, iteration)
                     checkpoint_path = "{}/TTSglow_{}".format(
                         output_directory, iteration)
                     save_checkpoint(model, optimizer, learning_rate, iteration,

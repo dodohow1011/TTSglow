@@ -8,8 +8,8 @@ class waveglowLogger(SummaryWriter):
     def __init__(self, logdir):
         super(waveglowLogger, self).__init__(logdir)
 
-    def log_training(self, reduced_loss, learning_rate,
-                     iteration):
+    def log_training(self, reduced_loss, dur_loss, learning_rate, iteration):
+            self.add_scalar("duration_predictor.loss", dur_loss, iteration)
             self.add_scalar("training.loss", reduced_loss, iteration)
             # self.add_scalar("grad.norm", grad_norm, iteration)
             self.add_scalar("learning.rate", learning_rate, iteration)

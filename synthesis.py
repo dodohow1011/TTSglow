@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pylab as plt
 import os
 
@@ -14,12 +15,12 @@ from data_utils import FastSpeechDataset, collate_fn, DataLoader
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def plot_data(data, figsize=(12, 4)):
+def plot_data(data, num, figsize=(12, 4)):
     _, axes = plt.subplots(1, len(data), figsize=figsize)
     for i in range(len(data)):
-        axes[i].imshow(data[i], aspect='auto',
+        axes.imshow(data[i], aspect='auto',
                        origin='bottom', interpolation='none')
-    plt.savefig(os.path.join("img", "model_test.jpg"))
+    plt.savefig(os.path.join("img", "model_test_{}.jpg".format(num)))
 
 
 def get_waveglow():
@@ -51,7 +52,7 @@ if __name__ == "__main__":
     torch.manual_seed(hp.seed)
     torch.cuda.manual_seed(hp.seed)
     model = WaveGlow().cuda()
-    checkpoint = torch.load('outdir/TTSglow_200000')
+    checkpoint = torch.load('test/TTSglow_130000')
     model.load_state_dict(checkpoint['model'].state_dict())
 
     dataset = FastSpeechDataset()
@@ -71,10 +72,14 @@ if __name__ == "__main__":
         src_pos = torch.from_numpy(src_pos).long().to(device)
 
         mel = model.inference(src_seq, src_pos, sigma=1.0, alpha=1.0)
+        mel = mel.squeeze()
+        print (mel.size())
         mel_path = os.path.join(
             "results", "{}_synthesis.pt".format(i))
         torch.save(mel, mel_path)
-        print(mel_path)
+        plot_data([mel.cpu().numpy().T], i)
+        if i > 10:
+            break
 
 
 

@@ -52,7 +52,7 @@ class WaveGlowLoss(nn.Module):
         self.sigma = sigma
 
     def forward(self, model_output, alignment_tgt, mel_tgt):
-        z, log_s_list, log_det_W_list, duration_predictor_output, mel_predict = model_output
+        z, log_s_list, log_det_W_list, duration_predictor_output = model_output
         for i, log_s in enumerate(log_s_list):
             if i == 0:
                 log_s_total = torch.sum(log_s)
@@ -67,10 +67,10 @@ class WaveGlowLoss(nn.Module):
         alignment_tgt = torch.log(alignment_tgt)
         duration_predictor_loss = nn.MSELoss()(duration_predictor_output, alignment_tgt.squeeze())
         mel_tgt.requires_grad = False
-        mel_loss = nn.MSELoss()(mel_predict, mel_tgt)
+        # mel_loss = nn.MSELoss()(mel_predict, mel_tgt)
         n = z.size(0)*z.size(1)*z.size(2)
-        print ("{:3f}, {:3f}, {:3f}, {:3f}".format(duration_predictor_loss, log_s_total/n, log_det_W_total/n, mel_loss))
-        return loss/(z.size(0)*z.size(1)*z.size(2)) + duration_predictor_loss + mel_loss
+        print ("{:3f}, {:3f}, {:3f}".format(duration_predictor_loss, log_s_total/n, log_det_W_total/n))
+        return loss/(z.size(0)*z.size(1)*z.size(2)), duration_predictor_loss
 
 class Invertible1x1Conv(nn.Module):
     """
@@ -256,7 +256,7 @@ class WaveGlow(nn.Module):
         
         output_mel.append(mel)
 
-        mel_re = torch.cuda.FloatTensor(mel.size(0), mel.size(1), mel.size(2)).normal_()
+        '''mel_re = torch.cuda.FloatTensor(mel.size(0), mel.size(1), mel.size(2)).normal_()
 
         for k in reversed(range(self.n_flows)):
             n_half = int(mel_re.size(1)/2)
@@ -270,24 +270,30 @@ class WaveGlow(nn.Module):
             mel_1 = (mel_1 - b)/torch.exp(s)
             mel_re = torch.cat([mel_0, mel_1], 1)
             
-            mel_re = self.convinv[k](mel_re, reverse=True)
+            mel_re = self.convinv[k](mel_re, reverse=True)'''
 
 
-        return torch.cat(output_mel, 1), log_s_list, log_det_W_list, duration_predictor_output, mel_re
+        return torch.cat(output_mel, 1), log_s_list, log_det_W_list, duration_predictor_output#, mel_re
 
-    def infer(self, words, sigma=1.0):
+    def inference(self, src_seq, src_pos, sigma=1.0, alpha=1.0):
 
-        enc_output = Encoder(words) # b * d_enc * t
-
-        mel = torch.cuda.FloatTensor(enc_output.size(0), self.n_remaining_channels, self.max_mel_steps).normal_()
+        enc_output, enc_mask = self.encoder(src_seq, src_pos)
+        length_regulator_output, decoder_pos = self.length_regulator(
+            enc_output,
+            enc_mask,
+            None,
+            alpha,
+            None)
+        length_regulator_output = length_regulator_output.transpose(1, 2)
+        mel = torch.cuda.FloatTensor(enc_output.size(0), self.n_remaining_channels, length_regulator_output.size(2)).normal_()
         mel = torch.autograd.Variable(sigma*mel)
 
         for k in reversed(range(self.n_flows)):
-            n_half = int(audio.size(1)/2)
+            n_half = int(mel.size(1)/2)
             mel_0 = mel[:,:n_half,:]
             mel_1 = mel[:,n_half:,:]
 
-            output = self.TF[k]((mel_0, enc_output))
+            output = self.WN[k]((mel_0, length_regulator_output))
             s = output[:, n_half:, :]
             b = output[:, :n_half, :]
             mel_1 = (mel_1 - b)/torch.exp(s)
@@ -295,16 +301,11 @@ class WaveGlow(nn.Module):
 
             mel = self.convinv[k](mel, reverse=True)
 
-            if k % self.n_early_every == 0 and k > 0:
+            '''if k % self.n_early_every == 0 and k > 0:
                 z = torch.cuda.FloatTensor(enc_output.size(0), self.n_early_size, max_mel_steps).normal_()
-                mel = torch.cat((sigma*z, mel),1)
-        
-        for t in mel.size(2):
-            if t > 1 and is_end_of_frames(mel[:, :, t]):
-                mel = mel[:, :, :t+1]   # get the end of mel
+                mel = torch.cat((sigma*z, mel),1)'''
 
-        mel = mel.permute(0,2,1).data # b * t * d_mel
-        return mel
+        return mel.permute(0,2,1).data
 
     @staticmethod
     def remove_weightnorm(model):
